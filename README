@@ -1,0 +1,15 @@
+# Mirror
+
+A utility to monitor a directory and copy any added files/directories to
+another directory; to mirror one directory to another.
+
+The added twist is that every so often, copied files will be
+queried to make sure they are consistent with the files added to the source
+directory.  If consistency is found the original file will be deleted.
+
+This should be useful for copying files as they are generated from one
+filesystem to another over a somewhat unreliable connection.
+
+
+*  One consequence of the design is that the data gets transfered twice;
+   once on read and once on write.
