@@ -26,11 +26,12 @@ function LOG() {
 }
 
 /* Test */
+RETRY_MS             = 1*1000;
 WAIT_FOR_FILE_MS     = 5*1000; // 5 sec
 WAIT_FOR_TRANSFER_MS =10*1000; // 5 min
 /**/
 
-/* Production
+/* Production 
 WAIT_FOR_FILE_MS     =  1*60*1000; // 1  min
 WAIT_FOR_TRANSFER_MS = 10*60*1000; // 10 min
 /**/
@@ -38,12 +39,19 @@ WAIT_FOR_TRANSFER_MS = 10*60*1000; // 10 min
 // from: http://stackoverflow.com/questions/11293857/fastest-way-to-copy-file-in-node-js
 function copyFile(source, target, cb) {
   var cbCalled = false;
-
+  LOG(source,target);
   var wr =  fs.createWriteStream(target)
               .on("error", function(err) {done(err);})
               .on("close", function(ex)  {done();});
   var rd =  fs.createReadStream(source)
-              .on("error", function(err) {done(err);})
+              .on("error", function(err) {
+                if(err.code=='EBUSY') { // windows keeps the file locked till its done being written, so retry if busy, until the stream can be opened
+                  LOG('Retry. ',source)
+                  setTimeout(function(){copyFile(source,target,cb);},RETRY_MS)
+                } else { 
+                  done(err);
+                }
+              })
               .pipe(wr);
 
   function done(err) {
@@ -109,6 +117,8 @@ var copy_and_check=function(dst,root,dt_ms,cb) {
   }
 }
 
+var history={} // FIXME: Need a way of throwing away old stuff, periodically filter based on time stamp or something
+
 var onwatch = function(parent,onfile) {
   /*
    * parent - the directory being watched.  Should be the path to a directory.
@@ -130,16 +140,32 @@ var onwatch = function(parent,onfile) {
     })
   }
   var ondir=function(p) {
+    fs.watch(p,onwatch(p,onfile))
+/*
     setTimeout(function() { // wait a long time for directory changes to complete.
       fs.readdir(p,function(err,files) {
         if(err) LOG(err);
         files.forEach(function(e) { handle_path(path.join(p,e)); });
       });
     },WAIT_FOR_FILE_MS);
+*/
   }
-  return function(e,filename) { // the event is not super reliable afaict (always rename)
-      if (filename)
-        handle_path( path.join(parent,filename) ); // path to the source e.g test/text.txt
+  return function(e,filename) {
+      // the event is not super reliable afaict
+      // - always rename on osx
+      // - on windows, I get rename and change events.
+      //   "rename" on create.
+      //   "rename" (null) on delete?
+      //   "change" as filesystem makes commits, I think.
+      //   sometimes I don't see the rename event on creation.  At least when copying a directory.
+      
+      if (filename) {
+        if(!(filename in history)) {
+          history[filename]=true;
+          LOG(e,filename)
+          handle_path( path.join(parent,filename) ); // path to the source e.g test/text.txt
+        }
+      }
     }
 }
 
