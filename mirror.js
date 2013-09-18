@@ -19,29 +19,37 @@ var fs=require('fs'),
     util=require('util'),
     mkdirp=require('mkdirp');
 
-var outstanding=0;
+var outstanding={};
 function LOG() {
-  console.log( util.format('[%d] ',outstanding) +
+  console.log( util.format('[%d] ',Object.keys(outstanding).length) +
                util.format.apply(null,arguments));
 }
 
-/* Test */
-RETRY_MS             = 1*1000;
-WAIT_FOR_FILE_MS     = 5*1000; // 5 sec
-WAIT_FOR_TRANSFER_MS =10*1000; // 5 min
+// The history is there just to prevent watching the same file multiple times.
+// When a file is written to a watched directory many events get fired.  This
+// ensures we respond to just one of those.
+var history={} 
+
+
+/* Timing */
+RETRY_MS              = 1*1000; // msec -- The copy may fail if the file is locked for writing, so the copy is retried every so often
+WAIT_FOR_TRANSFER_MS  =10*1000; // msec -- Wait a bit before validating the copy
+HISTORY_TIMEOUT       =10*1000; // msec -- if an item in the history is older that this timeout, remove it
+HISTORY_CLEAN_INTERVAL= 5*1000; // msec -- check the history for stale items every so often
+PURGEDIR_TIMEOUT      = 5*1000; // msec -- amount of time to wait after deleting a file before an attempt is made to remove the directory
 /**/
 
-/* Production 
-WAIT_FOR_FILE_MS     =  1*60*1000; // 1  min
-WAIT_FOR_TRANSFER_MS = 10*60*1000; // 10 min
-/**/
+
+// Directory names to ignore
+ignore={};
+ignore["$RECYCLE.BIN"]=true
 
 // from: http://stackoverflow.com/questions/11293857/fastest-way-to-copy-file-in-node-js
 function copyFile(source, target, cb) {
   var cbCalled = false;
   LOG(source,target);
   var wr =  fs.createWriteStream(target)
-              .on("error", function(err) {done(err);})
+              .on("error", function(err) {LOG(err); LOG('Retry. ',source); setTimeout(function(){copyFile(source,target,cb);},RETRY_MS); /*done(err);*/})
               .on("close", function(ex)  {done();});
   var rd =  fs.createReadStream(source)
               .on("error", function(err) {
@@ -68,7 +76,10 @@ var hashfile=function(filename,cb) {
  */
   var h = crypto.createHash('sha1');
   fs.ReadStream(filename)
-    .on('error',function(err) { LOG("Problem hashing ",filename); cb(0); })
+    .on('error',function(err) { 
+                LOG("Problem hashing ",filename);
+                setTimeout(function() {hashfile(filename,cb);},RETRY_MS)/*cb(0);*/
+              })
     .on('data', function(d)   { h.update(d); })
     .on('end', function()     { cb(h.digest('hex')); });
 }
@@ -100,24 +111,30 @@ var copy_and_check=function(dst,root,dt_ms,cb) {
   return function onfile(src) {
     var target=path.join(dst,path.relative(root,src));
     var hc=HashComparison(function(issame) { cb(src,dst,issame); });
-    outstanding++;
+    outstanding[src]=true;
     LOG(target,'<--',src,dt_ms);
-    mkdirp(path.dirname(target),function(err){
-      if(err) LOG(err);
-      LOG('COPYING ', src)
-      copyFile(src,target,function(err){
-        if(err) LOG(err);
-        else{
-          hc.hashA(src);
-          setTimeout(function(){hc.hashB(target);},dt_ms);
+    function handle_copy() {
+      mkdirp(path.dirname(target),function(err){
+        if(err && err.code!="OK") {
+          LOG(err);
+          if(err.code=="ECONNRESET")
+            setTimeout(function(){LOG('RETRY', src); handle_copy();},RETRY_MS);
         }
+        LOG('COPYING ', src)
+        copyFile(src,target,function(err){
+          if(err) LOG(err);
+          else{
+            hc.hashA(src);
+            setTimeout(function(){hc.hashB(target);},dt_ms);
+          }
+        });
       });
-    });
-
+    }
+    handle_copy();
   }
 }
 
-var history={} // FIXME: Need a way of throwing away old stuff, periodically filter based on time stamp or something
+
 
 var onwatch = function(parent,onfile) {
   /*
@@ -141,14 +158,6 @@ var onwatch = function(parent,onfile) {
   }
   var ondir=function(p) {
     fs.watch(p,onwatch(p,onfile))
-/*
-    setTimeout(function() { // wait a long time for directory changes to complete.
-      fs.readdir(p,function(err,files) {
-        if(err) LOG(err);
-        files.forEach(function(e) { handle_path(path.join(p,e)); });
-      });
-    },WAIT_FOR_FILE_MS);
-*/
   }
   return function(e,filename) {
       // the event is not super reliable afaict
@@ -161,7 +170,7 @@ var onwatch = function(parent,onfile) {
       
       if (filename) {
         if(!(filename in history)) {
-          history[filename]=true;
+          history[filename]=new Date();
           LOG(e,filename)
           handle_path( path.join(parent,filename) ); // path to the source e.g test/text.txt
         }
@@ -171,15 +180,76 @@ var onwatch = function(parent,onfile) {
 
 var onsame = function(src,dst,issame){
   if(issame) {
-    outstanding--;
+    delete outstanding[src];
     LOG('Same: Deleting ', src);
     fs.unlink(src,function(err) {if(err) LOG(err);});
   } else {
     LOG('!!! DIFFERENT: ',src, 'and ', dst);
   }
 }
+
 var main = function(src,dst) {
+  // setup watches for existing subdirs
+  fs.readdir(src,function(err,files){
+    (files||[]).forEach(function(f) {    
+      if(f in ignore) return;
+      s=path.join(src,f)
+      d=path.join(dst,f)
+      fs.stat(s,function(err,stats){
+        if(stats && stats.isDirectory()) {
+          main(s,d);
+        }
+      });
+    });
+  });
+  // setup watch for root
   fs.watch(src,onwatch(src, copy_and_check(dst,src,WAIT_FOR_TRANSFER_MS,onsame)));
 }
 
+setInterval(function() {
+  var cur=new Date();
+  LOG('HISTORY CLEANUP: Size = ',Object.keys(history).length);
+  for(var k in history)  {
+    if((cur-history[k])>HISTORY_TIMEOUT)
+      delete history[k];
+  }
+},HISTORY_CLEAN_INTERVAL) // run every second
 main(process.argv[2],process.argv[3])
+
+
+// exit
+/*
+var tty = require("tty");
+
+process.openStdin().on("keypress", function(chunk, key) {
+  if(key && key.name === "c" && key.ctrl) {
+    console.log("bye bye");
+    process.exit();
+  }
+});
+
+tty.setRawMode(true);
+*/
+process.stdin.resume();//so the program will not close instantly
+process.on('exit', function (){
+  if(outstanding) {
+    LOG("--- REMAINING ---")
+    for(var s in outstanding) {
+      console.log(s)
+    }
+  }
+
+});
+process.on('SIGINT', function () {
+  console.log('Got SIGINT.  Press Control-D to exit.');
+});
+process.stdin.on("data", function(key) {
+  if(key && key==="\u0003") { //key.name === "c" && key.ctrl) {
+    LOG("Got Ctrl-C");
+    process.exit();
+  }  
+});
+process.stdin.setEncoding('utf8');
+process.stdin.setRawMode(true);
+
+//node mirror.js e: z:\acquisition
