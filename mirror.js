@@ -43,6 +43,7 @@ PURGEDIR_TIMEOUT      = 5*1000; // msec -- amount of time to wait after deleting
 // Directory names to ignore
 ignore={};
 ignore["$RECYCLE.BIN"]=true
+ignore["System Volume Information"]=true
 
 // from: http://stackoverflow.com/questions/11293857/fastest-way-to-copy-file-in-node-js
 function copyFile(source, target, cb) {
