@@ -103,7 +103,43 @@ var HashComparison=function(cb)
   return ctx;
 }
 
+//
 
+var statfile=function(filename,cb) {
+  function handle_err(err) {
+      LOG("[File comparison] Could not fstat ",filename);
+      LOG(err);
+      setTimeout(function() {hashfile(filename,cb);},RETRY_MS);
+  }
+  fs.open(filename,'r',function(e,fd){
+        if(e) {handle_err(e); return;}
+        fs.fstat(fd,function(e,stat){
+          if(e) {handle_err(e); return;}
+          cb(stat);
+        })});
+}
+
+var StatComparison=function(cb)
+{ var ctx={};
+  var ha=undefined;
+  var hb=undefined;
+  var maybecheck=function() {
+    if(ha && hb) cb(ha.size==hb.size);
+  }
+  ctx.hashA=function(filename) {
+    statfile(filename,function(hash){ ha=hash; maybecheck(); });
+    return ctx;
+  }
+  ctx.hashB=function(filename) {
+    statfile(filename,function(hash){ hb=hash; maybecheck(); });
+    return ctx;
+  }
+
+  return ctx;
+}
+
+
+//
 
 var copy_and_check=function(dst,root,dt_ms,cb) {
 /* cb - function(src,dst,issame)
@@ -111,7 +147,7 @@ var copy_and_check=function(dst,root,dt_ms,cb) {
  */
   return function onfile(src) {
     var target=path.join(dst,path.relative(root,src));
-    var hc=HashComparison(function(issame) { cb(src,dst,issame); });
+    var hc=StatComparison(function(issame) { cb(src,dst,issame); });
     outstanding[src]=true;
     LOG(target,'<--',src,dt_ms);
     function handle_copy() {
