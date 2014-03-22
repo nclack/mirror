@@ -111,12 +111,15 @@ var statfile=function(filename,cb) {
       LOG(err);
       setTimeout(function() {hashfile(filename,cb);},RETRY_MS);
   }
-  fs.open(filename,'r',function(e,fd){
+  fs.open(filename,'r',function(e,fd) {
         if(e) {handle_err(e); return;}
         fs.fstat(fd,function(e,stat){
           if(e) {handle_err(e); return;}
-          cb(stat);
-        })});
+          fs.close(fd,function(){
+            cb(stat);
+          });
+        })
+    });
 }
 
 var StatComparison=function(cb)
