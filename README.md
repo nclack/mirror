@@ -14,7 +14,7 @@ filesystem to another over a somewhat unreliable connection.
 
 ## Usage
 
-Requires node.js[1].
+Requires [node.js][1].
    
    node mirror.js <src> <dst>
    
