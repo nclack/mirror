@@ -40,11 +40,11 @@ var history={}
 
 
 /* Timing */
-RETRY_MS              = 1*1000; // msec -- The copy may fail if the file is locked for writing, so the copy is retried every so often
-WAIT_FOR_TRANSFER_MS  =10*1000; // msec -- Wait a bit before validating the copy
-HISTORY_TIMEOUT       =10*1000; // msec -- if an item in the history is older that this timeout, remove it
-HISTORY_CLEAN_INTERVAL= 5*1000; // msec -- check the history for stale items every so often
-PURGEDIR_TIMEOUT      = 5*1000; // msec -- amount of time to wait after deleting a file before an attempt is made to remove the directory
+var RETRY_MS              = 1*1000; // msec -- The copy may fail if the file is locked for writing, so the copy is retried every so often
+var WAIT_FOR_TRANSFER_MS  =10*1000; // msec -- Wait a bit before validating the copy
+var HISTORY_TIMEOUT       =10*1000; // msec -- if an item in the history is older that this timeout, remove it
+var HISTORY_CLEAN_INTERVAL= 5*1000; // msec -- check the history for stale items every so often
+var PURGEDIR_TIMEOUT      = 5*1000; // msec -- amount of time to wait after deleting a file before an attempt is made to remove the directory
 /**/
 
 
@@ -241,8 +241,8 @@ var main = function(src,dst) {
   fs.readdir(src,function(err,files){
     (files||[]).forEach(function(f) {    
       if(f in ignore) return;
-      s=path.join(src,f)
-      d=path.join(dst,f)
+      var s=path.join(src,f)
+      var d=path.join(dst,f)
       fs.stat(s,function(err,stats){
         if(stats && stats.isDirectory()) {
           main(s,d);
