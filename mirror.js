@@ -25,6 +25,14 @@ function LOG() {
                util.format.apply(null,arguments));
 }
 
+function safewatch(filename,listener) {
+  try {
+    fs.watch(filename,listener);
+  } catch(e) {
+    LOG("[WATCH EXCEPTION]",e);
+  }
+}
+
 // The history is there just to prevent watching the same file multiple times.
 // When a file is written to a watched directory many events get fired.  This
 // ensures we respond to just one of those.
@@ -197,7 +205,7 @@ var onwatch = function(parent,onfile) {
     })
   }
   var ondir=function(p) {
-    fs.watch(p,onwatch(p,onfile))
+    safewatch(p,onwatch(p,onfile))
   }
   return function(e,filename) {
       // the event is not super reliable afaict
@@ -243,7 +251,7 @@ var main = function(src,dst) {
     });
   });
   // setup watch for root
-  fs.watch(src,onwatch(src, copy_and_check(dst,src,WAIT_FOR_TRANSFER_MS,onsame)));
+  safewatch(src,onwatch(src, copy_and_check(dst,src,WAIT_FOR_TRANSFER_MS,onsame)));
 }
 
 setInterval(function() {
