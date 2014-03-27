@@ -49,7 +49,7 @@ var PURGEDIR_TIMEOUT      = 5*1000; // msec -- amount of time to wait after dele
 
 
 // Directory names to ignore
-ignore={};
+var ignore={};
 ignore["$RECYCLE.BIN"]=true
 ignore["System Volume Information"]=true
 
@@ -261,8 +261,8 @@ setInterval(function() {
     if((cur-history[k])>HISTORY_TIMEOUT)
       delete history[k];
   }
-},HISTORY_CLEAN_INTERVAL) // run every second
-main(process.argv[2],process.argv[3])
+},HISTORY_CLEAN_INTERVAL); // run every second
+main(process.argv[2],process.argv[3]);
 
 
 // exit
@@ -290,6 +290,10 @@ process.on('exit', function (){
 });
 process.on('SIGINT', function () {
   console.log('Got SIGINT.  Press Control-D to exit.');
+});
+process.on('uncaughtException', function(err) {
+  LOG(new Date());
+  LOG('Caught exception: ',err);
 });
 process.stdin.on("data", function(key) {
   if(key && key==="\u0003") { //key.name === "c" && key.ctrl) {
