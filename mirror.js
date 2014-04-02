@@ -25,28 +25,81 @@ function LOG() {
                util.format.apply(null,arguments));
 }
 
-function safewatch(filename,listener) {
-  try {
-    fs.watch(filename,listener);
-  } catch(e) {
-    LOG("[WATCH EXCEPTION]",e);
-  }
-}
 
 // The history is there just to prevent watching the same file multiple times.
 // When a file is written to a watched directory many events get fired.  This
 // ensures we respond to just one of those.
-var history={} 
+var history={}
 
+// watches keeps tracks of watched directories.
+// These eventually need to get purged.
+// A successful file transfer triggers a delayed purge on it's parent directory
+// after PURGEDIR_TIMEOUT ms.  A purged directory might trigger a purge on it's
+// parent as well.
+var watches={}
 
 /* Timing */
 var RETRY_MS              = 1*1000; // msec -- The copy may fail if the file is locked for writing, so the copy is retried every so often
 var WAIT_FOR_TRANSFER_MS  =10*1000; // msec -- Wait a bit before validating the copy
 var HISTORY_TIMEOUT       =10*1000; // msec -- if an item in the history is older that this timeout, remove it
 var HISTORY_CLEAN_INTERVAL= 5*1000; // msec -- check the history for stale items every so often
-var PURGEDIR_TIMEOUT      = 5*1000; // msec -- amount of time to wait after deleting a file before an attempt is made to remove the directory
+var PURGEDIR_TIMEOUT      = 1*1000; // msec -- amount of time to wait after deleting a file before an attempt is made to remove the directory
 /**/
 
+
+function safewatch(filename,listener) {
+  try {
+    watches[filename]=fs.watch(filename,listener);
+  } catch(e) {
+    LOG("[WATCH EXCEPTION]",e);
+  }
+}
+
+// trash temporary files that should not prevent directory deletion
+var TRASH={};
+TRASH[".DS_Store"]=true;
+
+function unlinkfiles(dirname,files,ret) {
+  var ndone=0;
+  function done() {
+    ndone++;
+    if(ndone>files.length)
+      ret();
+  }
+  if(files.length) {
+    files.forEach(function(v) {
+     fs.unlink(path.join(dirname,v),function(e) {LOG(e);done();})
+    });
+  } else {
+    ret();
+  }
+}
+
+function maybe_clean_watch(dirname) {
+  // assume: the watches are only made on directories
+  LOG("[WATCH CLEAN] Attempt: ",dirname);
+  fs.readdir(dirname,function(err,files) {
+    if(err) LOG("[WATCH CLEAN] ",err);
+
+    var tokill=files.filter(function(v) {return v in TRASH;});
+    var legit =files.filter(function(v) {return !(v in TRASH)});
+    console.log(legit);
+    unlinkfiles(dirname,tokill,function() {
+      LOG("[WATCH CLEAN] files: ",legit);
+      if(legit.length==0) {
+        watches[dirname].close();
+        delete watches[dirname];
+        LOG('[WATCH CLEAN] Watch Closed ',dirname);
+        LOG('[WATCH CLEAN] Attempting to remove ',dirname);
+        fs.rmdir(dirname,function (e) {if(e) LOG(e);});
+
+        var parent=path.dirname(dirname);
+        if(parent in watches)
+          setTimeout(function() {maybe_clean_watch(parent);},PURGEDIR_TIMEOUT);
+      }
+    });
+  });
+}
 
 // Directory names to ignore
 var ignore={};
@@ -65,7 +118,7 @@ function copyFile(source, target, cb) {
                 if(err.code=='EBUSY') { // windows keeps the file locked till its done being written, so retry if busy, until the stream can be opened
                   LOG('Retry. ',source)
                   setTimeout(function(){copyFile(source,target,cb);},RETRY_MS)
-                } else { 
+                } else {
                   done(err);
                 }
               })
@@ -178,7 +231,7 @@ var onwatch = function(parent,onfile) {
       //   "rename" (null) on delete?
       //   "change" as filesystem makes commits, I think.
       //   sometimes I don't see the rename event on creation.  At least when copying a directory.
-      
+
       if (filename) {
         if(!(filename in history)) {
           history[filename]=new Date();
@@ -194,6 +247,7 @@ var onsame = function(src,dst,issame){
     delete outstanding[src];
     LOG('Same: Deleting ', src);
     fs.unlink(src,function(err) {if(err) LOG(err);});
+    setTimeout(function () {maybe_clean_watch(path.dirname(src));},PURGEDIR_TIMEOUT);
   } else {
     LOG('!!! DIFFERENT: ',src, 'and ', dst);
   }
@@ -202,7 +256,7 @@ var onsame = function(src,dst,issame){
 var main = function(src,dst) {
   // setup watches for existing subdirs
   fs.readdir(src,function(err,files){
-    (files||[]).forEach(function(f) {    
+    (files||[]).forEach(function(f) {
       if(f in ignore) return;
       var s=path.join(src,f)
       var d=path.join(dst,f)
@@ -229,18 +283,6 @@ main(process.argv[2],process.argv[3]);
 
 
 // exit
-/*
-var tty = require("tty");
-
-process.openStdin().on("keypress", function(chunk, key) {
-  if(key && key.name === "c" && key.ctrl) {
-    console.log("bye bye");
-    process.exit();
-  }
-});
-
-tty.setRawMode(true);
-*/
 process.stdin.resume();//so the program will not close instantly
 process.on('exit', function (){
   if(outstanding) {
@@ -262,7 +304,7 @@ process.stdin.on("data", function(key) {
   if(key && key==="\u0003") { //key.name === "c" && key.ctrl) {
     LOG("Got Ctrl-C");
     process.exit();
-  }  
+  }
 });
 process.stdin.setEncoding('utf8');
 process.stdin.setRawMode(true);
