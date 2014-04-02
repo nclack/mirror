@@ -79,38 +79,6 @@ function copyFile(source, target, cb) {
   }
 }
 
-var hashfile=function(filename,cb) {
-/* cb - function(hash)
- *    - called when hash has finished computing
- */
-  var h = crypto.createHash('sha1');
-  fs.ReadStream(filename)
-    .on('error',function(err) { 
-                LOG("Problem hashing ",filename);
-                setTimeout(function() {hashfile(filename,cb);},RETRY_MS)/*cb(0);*/
-              })
-    .on('data', function(d)   { h.update(d); })
-    .on('end', function()     { cb(h.digest('hex')); });
-}
-
-var HashComparison=function(cb)
-{ var ctx={};
-  var ha=undefined;
-  var hb=undefined;
-  var maybecheck=function() {
-    if(ha && hb) cb(ha==hb);
-  }
-  ctx.hashA=function(filename) {
-    hashfile(filename,function(hash){ ha=hash; maybecheck(); });
-    return ctx;
-  }
-  ctx.hashB=function(filename) {
-    hashfile(filename,function(hash){ hb=hash; maybecheck(); });
-    return ctx;
-  }
-  return ctx;
-}
-
 //
 
 var statfile=function(filename,cb) {
@@ -119,15 +87,10 @@ var statfile=function(filename,cb) {
       LOG(err);
       setTimeout(function() {hashfile(filename,cb);},RETRY_MS);
   }
-  fs.open(filename,'r',function(e,fd) {
-        if(e) {handle_err(e); return;}
-        fs.fstat(fd,function(e,stat){
-          if(e) {handle_err(e); return;}
-          fs.close(fd,function(){
-            cb(stat);
-          });
-        })
-    });
+  fs.stat(filename,function(e,stat) {
+	  if(e) {handle_err(e);;}
+	  cb(stat);
+  });
 }
 
 var StatComparison=function(cb)
